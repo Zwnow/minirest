@@ -11,6 +11,7 @@ import (
 	"restfulapi/app/models"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func resetUsers() {
@@ -76,6 +77,91 @@ func TestRegisterHandler(t *testing.T) {
 				}
 				if tc.expectedBody["message"] != response["message"] {
 					t.Fatalf("Expected: %v, Got: %v", tc.expectedBody, response)
+				}
+			}
+		})
+	}
+}
+
+func TestLoginHandler(t *testing.T) {
+	// Reset users
+	resetUsers()
+
+	// Register test user
+	testUser := models.Credentials{
+		Email:    "login@example.com",
+		Password: "password123",
+	}
+
+	// Register directly
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(testUser.Password), bcrypt.DefaultCost)
+	users = append(users, models.User{
+		Id:       1,
+		Email:    testUser.Email,
+		Password: string(hashedPassword),
+	})
+
+	tests := []struct {
+		name           string
+		credentials    models.Credentials
+		expectedStatus int
+		checkToken     bool
+	}{
+		{
+			name: "Successful Login",
+			credentials: models.Credentials{
+				Email:    "login@example.com",
+				Password: "password123",
+			},
+			expectedStatus: http.StatusOK,
+			checkToken:     true,
+		},
+		{
+			name: "User Not Found",
+			credentials: models.Credentials{
+				Email:    "nonexistent@example.com",
+				Password: "password123",
+			},
+			expectedStatus: http.StatusUnauthorized,
+			checkToken:     false,
+		},
+		{
+			name: "Wrong Password",
+			credentials: models.Credentials{
+				Email:    "login@example.com",
+				Password: "wrongpassword",
+			},
+			expectedStatus: http.StatusUnauthorized,
+			checkToken:     false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(tc.credentials)
+			req, err := http.NewRequest("POST", "/login", bytes.NewBuffer(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rr := httptest.NewRecorder()
+			handler := http.HandlerFunc(LoginHandler)
+
+			handler.ServeHTTP(rr, req)
+
+			if tc.expectedStatus != rr.Code {
+				t.Fatalf("Expected: %d, Got: %d", tc.expectedStatus, rr.Code)
+			}
+
+			if tc.checkToken {
+				var response map[string]string
+				err := json.NewDecoder(rr.Body).Decode(&response)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if response["token"] == "" {
+					t.Fatal("Expected token in response")
 				}
 			}
 		})
