@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"restfulapi/app/models"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/gorilla/mux"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -168,42 +170,233 @@ func TestLoginHandler(t *testing.T) {
 	}
 }
 
-// GenerateTestToken creates a JWT token for testing
-func GenerateTestToken(userID int, secret []byte, expiration time.Duration) string {
-	// Create token expiration time
-	expirationTime := time.Now().Add(expiration)
+func TestAuthMiddleware(t *testing.T) {
+	resetUsers()
+	users = append(users, models.User{Id: 1, Email: "middleware@example.com"})
 
-	// Define the claims
-	claims := jwt.MapClaims{
-		"user_id": userID,
-		"exp":     expirationTime.Unix(),
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Generate a valid token
+	expirationTime := time.Now().Add(15 * time.Minute)
+	claims := &models.Claims{
+		UserID: 1,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+		},
 	}
 
-	// Create token with claims
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	validToken, _ := token.SignedString(jwtKey)
 
-	// Sign token with secret key
-	tokenString, _ := token.SignedString(secret)
+	tests := []struct {
+		name           string
+		authHeader     string
+		expectedStatus int
+	}{
+		{
+			name:           "Valid Token",
+			authHeader:     "Bearer " + validToken,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "No Token",
+			authHeader:     "",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "Invalid Token Format",
+			authHeader:     "InvalidToken",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "Expired Token",
+			authHeader:     "Bearer " + generateExpiredToken(),
+			expectedStatus: http.StatusUnauthorized,
+		},
+	}
 
-	return tokenString
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest("GET", "/profile", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if tc.authHeader != "" {
+				req.Header.Set("Authorization", tc.authHeader)
+			}
+
+			rr := httptest.NewRecorder()
+
+			middleware := AuthMiddleware(nextHandler)
+			middleware.ServeHTTP(rr, req)
+
+			if tc.expectedStatus != rr.Code {
+				t.Fatalf("Expected: %d, Got: %d", tc.expectedStatus, rr.Code)
+			}
+		})
+	}
 }
 
-// GenerateExpiredToken creates an expired JWT token for testing
-func GenerateExpiredToken(userID int, secret []byte) string {
-	// Create token expiration time (in the past)
+// Helper function to generate an expired token
+func generateExpiredToken() string {
 	expirationTime := time.Now().Add(-15 * time.Minute)
-
-	// Define the claims
-	claims := jwt.MapClaims{
-		"user_id": userID,
-		"exp":     expirationTime.Unix(),
+	claims := &models.Claims{
+		UserID: 1,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+		},
 	}
 
-	// Create token with claims
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	expiredToken, _ := token.SignedString(jwtKey)
+	return expiredToken
+}
 
-	// Sign token with secret key
-	tokenString, _ := token.SignedString(secret)
+func TestProfileHandler(t *testing.T) {
+	resetUsers()
+	testUser := models.User{Id: 2, Email: "profile@example.com"}
+	users = append(users, testUser)
 
-	return tokenString
+	expirationTime := time.Now().Add(15 * time.Minute)
+	claims := &models.Claims{
+		UserID: testUser.Id,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	validToken, _ := token.SignedString(jwtKey)
+
+	invalidUserClaims := &models.Claims{
+		UserID: 9999,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+		},
+	}
+
+	invalidUserToken := jwt.NewWithClaims(jwt.SigningMethodHS256, invalidUserClaims)
+	nonExistentUserToken, _ := invalidUserToken.SignedString(jwtKey)
+
+	tests := []struct {
+		name           string
+		token          string
+		expectedStatus int
+		checkBody      bool
+	}{
+		{
+			name:           "Valid User",
+			token:          validToken,
+			expectedStatus: http.StatusOK,
+			checkBody:      true,
+		},
+		{
+			name:           "Non-existent User",
+			token:          nonExistentUserToken,
+			expectedStatus: http.StatusNotFound,
+			checkBody:      false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest("GET", "/api/profile", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+
+			rr := httptest.NewRecorder()
+			handler := http.HandlerFunc(ProfileHandler)
+
+			handler.ServeHTTP(rr, req)
+
+			if tc.expectedStatus != rr.Code {
+				t.Fatalf("Expected: %d, Got: %d", tc.expectedStatus, rr.Code)
+			}
+
+			if tc.checkBody {
+				var response map[string]any
+				err = json.NewDecoder(rr.Body).Decode(&response)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if fmt.Sprintf("%d", testUser.Id) != response["id"] {
+					t.Fatalf("Expected ID: %v, Got: %v", testUser.Id, response["id"])
+				}
+
+				if testUser.Email != response["email"] {
+					t.Fatalf("Expected ID: %v, Got: %v", testUser.Email, response["email"])
+				}
+			}
+		})
+	}
+}
+
+func TestIntegration(t *testing.T) {
+	resetUsers()
+
+	r := mux.NewRouter()
+	SetupAuthRoutes(r)
+
+	testUser := models.Credentials{
+		Email:    "integration@example.com",
+		Password: "integration123",
+	}
+
+	t.Run("Register User", func(t *testing.T) {
+		body, _ := json.Marshal(testUser)
+		req, _ := http.NewRequest("POST", "/register", bytes.NewBuffer(body))
+		rr := httptest.NewRecorder()
+
+		r.ServeHTTP(rr, req)
+
+		if http.StatusCreated != rr.Code {
+			t.Fatalf("Expected: %d, Got: %d", http.StatusCreated, rr.Code)
+		}
+	})
+
+	var token string
+	t.Run("Login User", func(t *testing.T) {
+		body, _ := json.Marshal(testUser)
+		req, _ := http.NewRequest("POST", "/login", bytes.NewBuffer(body))
+
+		rr := httptest.NewRecorder()
+
+		r.ServeHTTP(rr, req)
+
+		if http.StatusOK != rr.Code {
+			t.Fatalf("Expected: %d, Got: %d", http.StatusOK, rr.Code)
+		}
+
+		var response map[string]string
+		json.NewDecoder(rr.Body).Decode(&response)
+		token = response["token"]
+		if token == "" {
+			t.Fatal("Token is empty")
+		}
+	})
+
+	t.Run("Access Protected Route", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "/api/profile", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+
+		r.ServeHTTP(rr, req)
+
+		if http.StatusOK != rr.Code {
+			t.Fatalf("Expected: %d, Got: %d", http.StatusOK, rr.Code)
+		}
+
+		var response map[string]any
+		json.NewDecoder(rr.Body).Decode(&response)
+		if testUser.Email != response["email"] {
+			t.Fatalf("Expected: %s, Got: %s", testUser.Email, response["email"])
+		}
+	})
 }

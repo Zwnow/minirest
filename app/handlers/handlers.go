@@ -140,7 +140,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 
 		// Remove Bearer Prefix
 		if len(tokenStr) > 7 && tokenStr[:7] == "Bearer " {
-			tokenStr = tokenStr[:7]
+			tokenStr = tokenStr[7:]
 		}
 
 		// Parse and validate token
@@ -162,7 +162,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 func ProfileHandler(w http.ResponseWriter, r *http.Request) {
 	tokenStr := r.Header.Get("Authorization")
 	if len(tokenStr) > 7 && tokenStr[:7] == "Bearer " {
-		tokenStr = tokenStr[:7]
+		tokenStr = tokenStr[7:]
 	}
 
 	claims := &models.Claims{}
