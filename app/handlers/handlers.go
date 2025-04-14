@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+    "fmt"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"time"
 
@@ -23,7 +25,9 @@ func SetupAuthRoutes(r *mux.Router) {
 	r.HandleFunc("/login", LoginHandler).Methods("POST")
 
 	protected := r.PathPrefix("/api").Subrouter()
+    protected.Use(RecoveryMiddleware)
 	protected.Use(AuthMiddleware)
+	protected.Use(SecureHeadersMiddleware)
 	protected.HandleFunc("/profile", ProfileHandler).Methods("GET")
 }
 
@@ -157,6 +161,38 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		// Token is valid, proceed
 		next.ServeHTTP(w, r)
 	})
+}
+
+func RecoveryMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        defer func() {
+            if err := recover(); err != nil {
+                w.Header().Set("Connection", "close")
+                fmt.Println(err)
+                debug.PrintStack()
+            }
+        }()
+		next.ServeHTTP(w, r)
+    })
+}
+
+func SecureHeadersMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Prevents XSS by specifying which dynamic resources are allowed to load
+        w.Header().Set("Content-Security-Policy", "default-src 'self'")
+        w.Header().Set("X-XSS-Protection", "1; mode=block")
+        // Prevents MIME sniffing
+        w.Header().Set("X-Content-Type-Options", "nosniff")
+        // Prevents site from being embedded in an iframe, clickjacking protection
+        w.Header().Set("X-Frame-Options", "DENY")
+        // Enforces HTTPS and protects agains downgrade attacks
+        // TODO: Enable later
+        // w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+        // Referrer-Policy
+        w.Header().Set("Referrer-Policy", "no-referrer")
+
+		next.ServeHTTP(w, r)
+    })
 }
 
 func ProfileHandler(w http.ResponseWriter, r *http.Request) {
