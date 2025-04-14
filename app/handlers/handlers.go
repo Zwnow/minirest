@@ -1,9 +1,10 @@
 package handlers
 
 import (
-    "context"
+	"context"
 	"encoding/json"
-    "fmt"
+	"fmt"
+	"log"
 	"net/http"
 	"runtime/debug"
 	"strconv"
@@ -26,7 +27,7 @@ func SetupAuthRoutes(r *mux.Router) {
 	r.HandleFunc("/login", LoginHandler).Methods("POST")
 
 	protected := r.PathPrefix("/api").Subrouter()
-    protected.Use(RecoveryMiddleware)
+	protected.Use(RecoveryMiddleware)
 	protected.Use(AuthMiddleware)
 	protected.Use(SecureHeadersMiddleware)
 	protected.HandleFunc("/profile", ProfileHandler).Methods("GET")
@@ -68,6 +69,14 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	users = append(users, newUser)
+
+	// Send verification mail
+	go func() {
+		err := SendRegistrationMail("svenotimm@gmail.com", "Sven-Ole Timm")
+		if err != nil {
+			log.Printf("Failed to send registration mail: %v\n", err)
+		}
+	}()
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{
@@ -135,6 +144,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type contextKey string
+
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Get token
@@ -159,8 +169,8 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-        const key contextKey = "userID"
-        ctx := context.WithValue(r.Context(), key, claims.UserID)
+		const key contextKey = "userID"
+		ctx := context.WithValue(r.Context(), key, claims.UserID)
 
 		// Token is valid, proceed
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -168,35 +178,35 @@ func AuthMiddleware(next http.Handler) http.Handler {
 }
 
 func RecoveryMiddleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        defer func() {
-            if err := recover(); err != nil {
-                w.Header().Set("Connection", "close")
-                fmt.Println(err)
-                debug.PrintStack()
-            }
-        }()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				w.Header().Set("Connection", "close")
+				fmt.Println(err)
+				debug.PrintStack()
+			}
+		}()
 		next.ServeHTTP(w, r)
-    })
+	})
 }
 
 func SecureHeadersMiddleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        // Prevents XSS by specifying which dynamic resources are allowed to load
-        w.Header().Set("Content-Security-Policy", "default-src 'self'")
-        w.Header().Set("X-XSS-Protection", "1; mode=block")
-        // Prevents MIME sniffing
-        w.Header().Set("X-Content-Type-Options", "nosniff")
-        // Prevents site from being embedded in an iframe, clickjacking protection
-        w.Header().Set("X-Frame-Options", "DENY")
-        // Enforces HTTPS and protects agains downgrade attacks
-        // TODO: Enable later
-        // w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
-        // Referrer-Policy
-        w.Header().Set("Referrer-Policy", "no-referrer")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Prevents XSS by specifying which dynamic resources are allowed to load
+		w.Header().Set("Content-Security-Policy", "default-src 'self'")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		// Prevents MIME sniffing
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		// Prevents site from being embedded in an iframe, clickjacking protection
+		w.Header().Set("X-Frame-Options", "DENY")
+		// Enforces HTTPS and protects agains downgrade attacks
+		// TODO: Enable later
+		// w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		// Referrer-Policy
+		w.Header().Set("Referrer-Policy", "no-referrer")
 
 		next.ServeHTTP(w, r)
-    })
+	})
 }
 
 func ProfileHandler(w http.ResponseWriter, r *http.Request) {
