@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strconv"
+	"sync"
 	"time"
 
 	"restfulapi/app/models"
@@ -18,7 +19,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var users = []models.User{}
+var (
+	users = []models.User{}
+	mu    sync.Mutex
+)
 
 // TODO: add to env
 var jwtKey = []byte("fdsjgh2o3bg2Wt2Y31bnxl342gvxA")
@@ -28,13 +32,13 @@ type contextKey string
 const UserContextKey contextKey = "userID"
 
 func SetupAuthRoutes(r *mux.Router) {
+	r.Use(RecoveryMiddleware)
+	r.Use(SecureHeadersMiddleware)
 	r.HandleFunc("/register", RegisterHandler).Methods("POST")
 	r.HandleFunc("/login", LoginHandler).Methods("POST")
 
 	protected := r.PathPrefix("/api").Subrouter()
-	protected.Use(RecoveryMiddleware)
 	protected.Use(AuthMiddleware)
-	protected.Use(SecureHeadersMiddleware)
 	protected.HandleFunc("/profile", ProfileHandler).Methods("GET")
 	protected.HandleFunc("/verify/{code}", EmailVerificationHandler).Methods("GET")
 }
@@ -95,8 +99,12 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	err := json.NewDecoder(r.Body).Decode(&creds)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "No credentials provided"})
 		return
 	}
+
+	mu.Lock()
+	defer mu.Unlock()
 
 	// Check if user already exists
 	for _, user := range users {
@@ -203,6 +211,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Println("AuthMiddleware called")
 		// Get token
 		tokenStr := r.Header.Get("Authorization")
 		if tokenStr == "" {
