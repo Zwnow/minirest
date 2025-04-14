@@ -1,48 +1,13 @@
 package handlers
 
 import (
-	"errors"
 	"fmt"
-	"log"
 	"os"
-	"path/filepath"
 
-	"github.com/joho/godotenv"
 	"github.com/mailjet/mailjet-apiv3-go/v4"
 )
 
-func loadEnv() error {
-	dir, err := os.Getwd()
-	if err != nil {
-		log.Printf("Failed to get working directory: %v", err)
-		return err
-	}
-
-	for {
-		envPath := filepath.Join(dir, ".env")
-		if _, err := os.Stat(envPath); err == nil {
-			err := godotenv.Load(envPath)
-			if err != nil {
-				log.Printf("Error loading .env file: %v", err)
-				return err
-			}
-			return nil
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return errors.New(".env file not found in any parent directory")
-		}
-		dir = parent
-	}
-}
-
 func SendRegistrationMail(toEmail, toName string) error {
-	err := loadEnv()
-	if err != nil {
-		return err
-	}
-
 	shouldSend := os.Getenv("MAIL_ACTIVE")
 	if shouldSend == "false" {
 		return nil
@@ -80,7 +45,7 @@ func SendRegistrationMail(toEmail, toName string) error {
 
 	messages := mailjet.MessagesV31{Info: messageInfo}
 	// response, err
-	_, err = mj.SendMailV31(&messages)
+	_, err := mj.SendMailV31(&messages)
 	if err != nil {
 		return fmt.Errorf("could not send email: %w", err)
 	}
