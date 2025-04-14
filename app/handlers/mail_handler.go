@@ -7,7 +7,7 @@ import (
 	"github.com/mailjet/mailjet-apiv3-go/v4"
 )
 
-func SendRegistrationMail(toEmail, toName string) error {
+func SendRegistrationMail(toEmail, toName, verificationCode string) error {
 	shouldSend := os.Getenv("MAIL_ACTIVE")
 	if shouldSend == "false" {
 		return nil
@@ -16,7 +16,7 @@ func SendRegistrationMail(toEmail, toName string) error {
 	publicKey := os.Getenv("MAILJET_KEY")
 	secretKey := os.Getenv("MAILJET_SECRET")
 
-	verificationUrl := ""
+	verificationUrl := os.Getenv("BASE_URL") + "/api/verify/" + verificationCode
 	textBody := fmt.Sprintf("Hi! Please verify your E-Mail Address by clicking the following link: %s", verificationUrl)
 	htmlBody := fmt.Sprintf(`
         <h3>Hi!</h3>

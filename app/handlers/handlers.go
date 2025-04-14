@@ -13,6 +13,7 @@ import (
 	"restfulapi/app/models"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -21,6 +22,10 @@ var users = []models.User{}
 
 // TODO: add to env
 var jwtKey = []byte("fdsjgh2o3bg2Wt2Y31bnxl342gvxA")
+
+type contextKey string
+
+const UserContextKey contextKey = "userID"
 
 func SetupAuthRoutes(r *mux.Router) {
 	r.HandleFunc("/register", RegisterHandler).Methods("POST")
@@ -31,6 +36,56 @@ func SetupAuthRoutes(r *mux.Router) {
 	protected.Use(AuthMiddleware)
 	protected.Use(SecureHeadersMiddleware)
 	protected.HandleFunc("/profile", ProfileHandler).Methods("GET")
+	protected.HandleFunc("/verify/{code}", EmailVerificationHandler).Methods("GET")
+}
+
+func EmailVerificationHandler(w http.ResponseWriter, r *http.Request) {
+	id := r.Context().Value(UserContextKey)
+	if id == nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "User not found in context"})
+		return
+	}
+
+	userId := id.(int)
+
+	// Get User
+	// TODO: replace with db
+	var user models.User
+	userFound := false
+	for _, u := range users {
+		if u.Id == userId {
+			user = u
+			userFound = true
+		}
+	}
+
+	if !userFound {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "User not found"})
+		return
+	}
+
+	code := mux.Vars(r)["code"]
+	if code == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing verification code"})
+		return
+	}
+
+	if code == user.EmailVerificationCode {
+		// TODO: replace with db
+		for i := range users {
+			if user.Id == users[i].Id {
+				users[i].EmailVerified = true
+			}
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Email verified successfully"})
+		return
+	}
+	w.WriteHeader(http.StatusBadRequest)
 }
 
 func RegisterHandler(w http.ResponseWriter, r *http.Request) {
@@ -62,17 +117,20 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create new user (TODO: add database)
+	// Can panic, TODO: handle safely (uuid.NewString)
 	newUser := models.User{
-		Id:       len(users) + 1,
-		Email:    creds.Email,
-		Password: string(hashedPassword),
+		Id:                    len(users) + 1,
+		Email:                 creds.Email,
+		EmailVerified:         false,
+		EmailVerificationCode: uuid.NewString(),
+		Password:              string(hashedPassword),
 	}
 
 	users = append(users, newUser)
 
 	// Send verification mail
 	go func() {
-		err := SendRegistrationMail("svenotimm@gmail.com", "Sven-Ole Timm")
+		err := SendRegistrationMail("svenotimm@gmail.com", "Sven-Ole Timm", newUser.EmailVerificationCode)
 		if err != nil {
 			log.Printf("Failed to send registration mail: %v\n", err)
 		}
@@ -143,8 +201,6 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type contextKey string
-
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Get token
@@ -169,8 +225,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		const key contextKey = "userID"
-		ctx := context.WithValue(r.Context(), key, claims.UserID)
+		ctx := context.WithValue(r.Context(), UserContextKey, claims.UserID)
 
 		// Token is valid, proceed
 		next.ServeHTTP(w, r.WithContext(ctx))

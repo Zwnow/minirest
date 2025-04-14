@@ -3,10 +3,11 @@ package models
 import "github.com/golang-jwt/jwt/v5"
 
 type User struct {
-	Id            int    `json:"id"`
-	Email         string `json:"email"`
-	EmailVerified bool   `json:"-"`
-	Password      string `json:"-"`
+	Id                    int    `json:"id"`
+	Email                 string `json:"email"`
+	EmailVerificationCode string `json:"-"`
+	EmailVerified         bool   `json:"email_verified"`
+	Password              string `json:"-"`
 }
 
 type Credentials struct {

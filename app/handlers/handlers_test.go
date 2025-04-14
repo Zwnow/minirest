@@ -12,6 +12,7 @@ import (
 	"restfulapi/app/models"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -253,6 +254,13 @@ func generateExpiredToken() string {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	expiredToken, _ := token.SignedString(jwtKey)
 	return expiredToken
+}
+
+func TestMailVerification(t *testing.T) {
+	resetUsers()
+	testUser := models.User{Id: 1, Email: "mail@example.com", EmailVerificationCode: uuid.NewString()}
+	users = append(users, testUser)
+	// TODO finish test
 }
 
 func TestProfileHandler(t *testing.T) {
