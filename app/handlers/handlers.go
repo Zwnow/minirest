@@ -1,6 +1,7 @@
 package handlers
 
 import (
+    "context"
 	"encoding/json"
     "fmt"
 	"net/http"
@@ -133,6 +134,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type contextKey string
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Get token
@@ -157,9 +159,11 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+        const key contextKey = "userID"
+        ctx := context.WithValue(r.Context(), key, claims.UserID)
 
 		// Token is valid, proceed
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
