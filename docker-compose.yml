@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_network
+
+  app:
+    build: .
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      MAIL_ACTIVE: ${MAIL_ACTIVE}
+      MAILJET_KEY: ${MAILJET_KEY}
+      MAILJET_SECRET: ${MAILJET_SECRET}
+      BASE_URL: ${BASE_URL}
+      JWT_KEY: ${JWT_KEY}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    networks:
+      - app_network
+    command: ["go", "run", "main.go"]
+
+volumes:
+  postgres_data:
+
+networks:
+  app_network:
+    driver: bridge

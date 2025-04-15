@@ -1,13 +1,20 @@
 package models
 
-import "github.com/golang-jwt/jwt/v5"
+import (
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+)
 
 type User struct {
-	Id                    int    `json:"id"`
-	Email                 string `json:"email"`
-	EmailVerificationCode string `json:"-"`
-	EmailVerified         bool   `json:"email_verified"`
-	Password              string `json:"-"`
+	Id                    uuid.UUID `json:"id"`
+	Email                 string    `json:"email"`
+	EmailVerificationCode string    `json:"-"`
+	EmailVerified         bool      `json:"email_verified"`
+	Password              string    `json:"-"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 type Credentials struct {
@@ -16,6 +23,6 @@ type Credentials struct {
 }
 
 type Claims struct {
-	UserID int `json:"user_id"`
+	UserID uuid.UUID `json:"user_id"`
 	jwt.RegisteredClaims
 }

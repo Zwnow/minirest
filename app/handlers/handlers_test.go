@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,11 +16,56 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	_ "github.com/lib/pq"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"golang.org/x/crypto/bcrypt"
 )
 
 func resetUsers() {
 	users = []models.User{}
+}
+
+func TestWithPostgres(t *testing.T) {
+	ctx := context.Background()
+	pgContainer, err := postgres.Run(ctx,
+		"postgres:latest",
+		postgres.WithDatabase("test"),
+		postgres.WithUsername("user"),
+		postgres.WithPassword("password"),
+	)
+	if err != nil {
+		t.Fatalf("failed to start container: %s", err)
+	}
+	defer pgContainer.Terminate(ctx)
+
+	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("failed to start container: %s", err)
+	}
+
+	db, err := sql.Open("postgres", connStr)
+	defer db.Close()
+
+	// UUID Extension
+	_, err = db.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`)
+	if err != nil {
+		t.Fatalf("failed to add uuid extension: %s", err)
+	}
+
+	_, err = db.Exec(`
+        CREATE TABLE users (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            email TEXT NOT NULL,
+            email_verification_code TEXT NOT NULL,
+            email_verified BOOLEAN DEFAULT FALSE,
+            password TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT now(),
+            updated_at TIMESTAMPTZ DEFAULT now()
+        )
+    `)
+	if err != nil {
+		t.Fatalf("failed to create user schema: %s", err)
+	}
 }
 
 func TestRegisterHandler(t *testing.T) {

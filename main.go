@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
+	"restfulapi/app/db"
 	"restfulapi/app/handlers"
+	"restfulapi/config"
 
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
@@ -18,10 +19,19 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to load environment")
 	}
-	log.Printf("MAIL SENDING ACTIVE: %v\n", os.Getenv("MAIL_ACTIVE"))
+
+	// Load configuration
+	cfg := config.Load()
+	log.Printf("MAIL SENDING ACTIVE: %v\n", cfg.Mailjet.Active)
 
 	r := mux.NewRouter()
 	handlers.SetupAuthRoutes(r)
+
+	// Setup db
+	err = db.SetupDatabase(cfg.Postgres)
+	if err != nil {
+		log.Fatalf("Failed to set up database: %s", err)
+	}
 
 	srv := &http.Server{
 		Handler:      r,
