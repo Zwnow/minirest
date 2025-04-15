@@ -46,7 +46,7 @@ func SetupDatabase(cfg config.PostgresConfig) error {
 	_, err = db.Exec(`
         CREATE TABLE users (
             id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            email TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
             email_verification_code TEXT NOT NULL,
             email_verified BOOLEAN DEFAULT FALSE,
             password TEXT NOT NULL,

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -18,28 +19,58 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
+	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
 	"golang.org/x/crypto/bcrypt"
 )
 
-func withPostgres(t *testing.T) (*sql.DB, func()) {
+func withPostgres(t *testing.T) (*sql.DB, config.Config, func()) {
+	os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
+	cfg := config.Load()
+
 	ctx := context.Background()
+
 	pgContainer, err := postgres.Run(ctx,
 		"postgres:latest",
-		postgres.WithDatabase("test"),
-		postgres.WithUsername("user"),
-		postgres.WithPassword("password"),
+		postgres.WithDatabase("test-db"),
+		postgres.WithUsername("postgres"),
+		postgres.WithPassword("postgres"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).WithStartupTimeout(5*time.Second)),
 	)
 	if err != nil {
 		t.Fatalf("failed to start container: %s", err)
 	}
 
+	cfg.Postgres.Host, err = pgContainer.Host(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := pgContainer.MappedPort(ctx, "5432")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg.Postgres.Port = p.Int()
+	cfg.Postgres.User = "postgres"
+	cfg.Postgres.Password = "postgres"
+	cfg.Postgres.DBName = "test-db"
+	cfg.Mailjet.Active = "false"
+
 	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		t.Fatalf("failed to start container: %s", err)
+		t.Fatal(err)
 	}
 
 	db, err := sql.Open("postgres", connStr)
+
+	err = db.Ping()
+	if err != nil {
+		t.Fatalf("failed to ping database: %s", err)
+	}
 
 	cleanup := func() {
 		db.Close()
@@ -67,13 +98,11 @@ func withPostgres(t *testing.T) (*sql.DB, func()) {
 		t.Fatalf("failed to create user schema: %s", err)
 	}
 
-	return db, cleanup
+	return db, cfg, cleanup
 }
 
 func TestRegisterHandler(t *testing.T) {
-	cfg := config.Load()
-
-	_, cleanup := withPostgres(t)
+	_, cfg, cleanup := withPostgres(t)
 	defer cleanup()
 
 	tests := []struct {
@@ -101,7 +130,7 @@ func TestRegisterHandler(t *testing.T) {
 			},
 			expectedStatus: http.StatusConflict,
 			expectedBody: map[string]string{
-				"message": "User already exists",
+				"message": "User already exists or different problem",
 			},
 		},
 	}
@@ -138,8 +167,7 @@ func TestRegisterHandler(t *testing.T) {
 }
 
 func TestLoginHandler(t *testing.T) {
-	cfg := config.Load()
-	_, cleanup := withPostgres(t)
+	_, cfg, cleanup := withPostgres(t)
 	defer cleanup()
 
 	// Register test user
@@ -226,8 +254,7 @@ func TestLoginHandler(t *testing.T) {
 }
 
 func TestAuthMiddleware(t *testing.T) {
-	cfg := config.Load()
-	_, cleanup := withPostgres(t)
+	_, cfg, cleanup := withPostgres(t)
 	defer cleanup()
 
 	// Register test user
@@ -260,7 +287,7 @@ func TestAuthMiddleware(t *testing.T) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	validToken, _ := token.SignedString(cfg.General.JwtKey)
+	validToken, _ := token.SignedString([]byte(cfg.General.JwtKey))
 
 	tests := []struct {
 		name           string
@@ -323,7 +350,7 @@ func generateExpiredToken(cfg config.Config) string {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	expiredToken, _ := token.SignedString(cfg.General.JwtKey)
+	expiredToken, _ := token.SignedString([]byte(cfg.General.JwtKey))
 	return expiredToken
 }
 
@@ -337,8 +364,7 @@ func TestMailVerification(t *testing.T) {
 */
 
 func TestProfileHandler(t *testing.T) {
-	cfg := config.Load()
-	_, cleanup := withPostgres(t)
+	_, cfg, cleanup := withPostgres(t)
 	defer cleanup()
 
 	// Register test user
@@ -366,7 +392,7 @@ func TestProfileHandler(t *testing.T) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	validToken, _ := token.SignedString(cfg.General.JwtKey)
+	validToken, _ := token.SignedString([]byte(cfg.General.JwtKey))
 
 	invalidUserClaims := &models.Claims{
 		UserID: uuid.New(),
@@ -376,7 +402,7 @@ func TestProfileHandler(t *testing.T) {
 	}
 
 	invalidUserToken := jwt.NewWithClaims(jwt.SigningMethodHS256, invalidUserClaims)
-	nonExistentUserToken, _ := invalidUserToken.SignedString(cfg.General.JwtKey)
+	nonExistentUserToken, _ := invalidUserToken.SignedString([]byte(cfg.General.JwtKey))
 
 	tests := []struct {
 		name           string
@@ -423,7 +449,7 @@ func TestProfileHandler(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				if fmt.Sprintf("%d", user.Id) != response["id"] {
+				if fmt.Sprintf("%s", user.Id) != response["id"] {
 					t.Fatalf("Expected ID: %v, Got: %v", user.Id, response["id"])
 				}
 
@@ -436,24 +462,13 @@ func TestProfileHandler(t *testing.T) {
 }
 
 func TestIntegration(t *testing.T) {
-	cfg := config.Load()
-	_, cleanup := withPostgres(t)
+	_, cfg, cleanup := withPostgres(t)
 	defer cleanup()
 
 	// Register test user
 	testUser := models.Credentials{
 		Email:    "integration@example.com",
 		Password: "integration123",
-	}
-
-	// Register directly
-	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(testUser.Password), bcrypt.DefaultCost)
-	_, err := insertUser(models.User{
-		Email:    testUser.Email,
-		Password: string(hashedPassword),
-	}, cfg)
-	if err != nil {
-		t.Fatal(err)
 	}
 
 	r := mux.NewRouter()

@@ -150,6 +150,7 @@ func LoginHandler(cfg config.Config) http.HandlerFunc {
 		err := json.NewDecoder(r.Body).Decode(&creds)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
+			log.Println(err)
 			return
 		}
 
@@ -157,11 +158,13 @@ func LoginHandler(cfg config.Config) http.HandlerFunc {
 		user, err := findUserByEmail(creds.Email, cfg)
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
+			log.Println(err)
 			return
 		}
 
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(creds.Password)); err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
+			log.Println(err)
 			return
 		}
 
@@ -180,9 +183,10 @@ func LoginHandler(cfg config.Config) http.HandlerFunc {
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
 		// Sign token with secret key
-		tokenString, err := token.SignedString(cfg.General.JwtKey)
+		tokenString, err := token.SignedString([]byte(cfg.General.JwtKey))
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
+			log.Println(err)
 			return
 		}
 
@@ -212,11 +216,12 @@ func AuthMiddleware(cfg config.Config) mux.MiddlewareFunc {
 			// Parse and validate token
 			claims := &models.Claims{}
 			token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (any, error) {
-				return cfg.General.JwtKey, nil
+				return []byte(cfg.General.JwtKey), nil
 			})
 
 			if err != nil || !token.Valid {
 				w.WriteHeader(http.StatusUnauthorized)
+				log.Println(err)
 				return
 			}
 			ctx := context.WithValue(r.Context(), UserContextKey, claims.UserID)
@@ -268,7 +273,7 @@ func ProfileHandler(cfg config.Config) http.HandlerFunc {
 
 		claims := &models.Claims{}
 		_, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (any, error) {
-			return cfg.General.JwtKey, nil
+			return []byte(cfg.General.JwtKey), nil
 		})
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -309,6 +314,7 @@ func findUserByEmail(email string, cfg config.Config) (models.User, error) {
 		&user.Email,
 		&user.EmailVerificationCode,
 		&user.EmailVerified,
+		&user.Password,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -339,6 +345,7 @@ func findUserByID(id uuid.UUID, cfg config.Config) (models.User, error) {
 		&user.Email,
 		&user.EmailVerificationCode,
 		&user.EmailVerified,
+		&user.Password,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
