@@ -25,7 +25,7 @@ func main() {
 	log.Printf("MAIL SENDING ACTIVE: %v\n", cfg.Mailjet.Active)
 
 	r := mux.NewRouter()
-	handlers.SetupAuthRoutes(r)
+	handlers.SetupAuthRoutes(r, cfg)
 
 	// Setup db
 	err = db.SetupDatabase(cfg.Postgres)

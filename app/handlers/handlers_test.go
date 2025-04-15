@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"restfulapi/app/models"
+	"restfulapi/config"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -21,11 +22,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func resetUsers() {
-	users = []models.User{}
-}
-
-func TestWithPostgres(t *testing.T) {
+func withPostgres(t *testing.T) (*sql.DB, func()) {
 	ctx := context.Background()
 	pgContainer, err := postgres.Run(ctx,
 		"postgres:latest",
@@ -36,7 +33,6 @@ func TestWithPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start container: %s", err)
 	}
-	defer pgContainer.Terminate(ctx)
 
 	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
@@ -44,7 +40,11 @@ func TestWithPostgres(t *testing.T) {
 	}
 
 	db, err := sql.Open("postgres", connStr)
-	defer db.Close()
+
+	cleanup := func() {
+		db.Close()
+		pgContainer.Terminate(ctx)
+	}
 
 	// UUID Extension
 	_, err = db.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`)
@@ -55,7 +55,7 @@ func TestWithPostgres(t *testing.T) {
 	_, err = db.Exec(`
         CREATE TABLE users (
             id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            email TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
             email_verification_code TEXT NOT NULL,
             email_verified BOOLEAN DEFAULT FALSE,
             password TEXT NOT NULL,
@@ -66,11 +66,15 @@ func TestWithPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create user schema: %s", err)
 	}
+
+	return db, cleanup
 }
 
 func TestRegisterHandler(t *testing.T) {
-	// Reset users between tests
-	resetUsers()
+	cfg := config.Load()
+
+	_, cleanup := withPostgres(t)
+	defer cleanup()
 
 	tests := []struct {
 		name           string
@@ -111,7 +115,7 @@ func TestRegisterHandler(t *testing.T) {
 			}
 
 			rr := httptest.NewRecorder()
-			handler := http.HandlerFunc(RegisterHandler)
+			handler := http.HandlerFunc(RegisterHandler(cfg))
 
 			handler.ServeHTTP(rr, req)
 
@@ -134,8 +138,9 @@ func TestRegisterHandler(t *testing.T) {
 }
 
 func TestLoginHandler(t *testing.T) {
-	// Reset users
-	resetUsers()
+	cfg := config.Load()
+	_, cleanup := withPostgres(t)
+	defer cleanup()
 
 	// Register test user
 	testUser := models.Credentials{
@@ -145,11 +150,13 @@ func TestLoginHandler(t *testing.T) {
 
 	// Register directly
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(testUser.Password), bcrypt.DefaultCost)
-	users = append(users, models.User{
-		Id:       1,
+	_, err := insertUser(models.User{
 		Email:    testUser.Email,
 		Password: string(hashedPassword),
-	})
+	}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name           string
@@ -195,7 +202,7 @@ func TestLoginHandler(t *testing.T) {
 			}
 
 			rr := httptest.NewRecorder()
-			handler := http.HandlerFunc(LoginHandler)
+			handler := http.HandlerFunc(LoginHandler(cfg))
 
 			handler.ServeHTTP(rr, req)
 
@@ -219,8 +226,25 @@ func TestLoginHandler(t *testing.T) {
 }
 
 func TestAuthMiddleware(t *testing.T) {
-	resetUsers()
-	users = append(users, models.User{Id: 1, Email: "middleware@example.com"})
+	cfg := config.Load()
+	_, cleanup := withPostgres(t)
+	defer cleanup()
+
+	// Register test user
+	testUser := models.Credentials{
+		Email:    "middleware@example.com",
+		Password: "password123",
+	}
+
+	// Register directly
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(testUser.Password), bcrypt.DefaultCost)
+	user, err := insertUser(models.User{
+		Email:    testUser.Email,
+		Password: string(hashedPassword),
+	}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -229,14 +253,14 @@ func TestAuthMiddleware(t *testing.T) {
 	// Generate a valid token
 	expirationTime := time.Now().Add(15 * time.Minute)
 	claims := &models.Claims{
-		UserID: 1,
+		UserID: user.Id,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	validToken, _ := token.SignedString(jwtKey)
+	validToken, _ := token.SignedString(cfg.General.JwtKey)
 
 	tests := []struct {
 		name           string
@@ -260,7 +284,7 @@ func TestAuthMiddleware(t *testing.T) {
 		},
 		{
 			name:           "Expired Token",
-			authHeader:     "Bearer " + generateExpiredToken(),
+			authHeader:     "Bearer " + generateExpiredToken(cfg),
 			expectedStatus: http.StatusUnauthorized,
 		},
 	}
@@ -278,8 +302,8 @@ func TestAuthMiddleware(t *testing.T) {
 
 			rr := httptest.NewRecorder()
 
-			middleware := AuthMiddleware(nextHandler)
-			middleware.ServeHTTP(rr, req)
+			wrapped := AuthMiddleware(cfg)(nextHandler)
+			wrapped.ServeHTTP(rr, req)
 
 			if tc.expectedStatus != rr.Code {
 				t.Fatalf("Expected: %d, Got: %d", tc.expectedStatus, rr.Code)
@@ -289,52 +313,70 @@ func TestAuthMiddleware(t *testing.T) {
 }
 
 // Helper function to generate an expired token
-func generateExpiredToken() string {
+func generateExpiredToken(cfg config.Config) string {
 	expirationTime := time.Now().Add(-15 * time.Minute)
 	claims := &models.Claims{
-		UserID: 1,
+		UserID: uuid.New(),
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	expiredToken, _ := token.SignedString(jwtKey)
+	expiredToken, _ := token.SignedString(cfg.General.JwtKey)
 	return expiredToken
 }
 
+/*
 func TestMailVerification(t *testing.T) {
 	resetUsers()
 	testUser := models.User{Id: 1, Email: "mail@example.com", EmailVerificationCode: uuid.NewString()}
 	users = append(users, testUser)
 	// TODO finish test
 }
+*/
 
 func TestProfileHandler(t *testing.T) {
-	resetUsers()
-	testUser := models.User{Id: 2, Email: "profile@example.com"}
-	users = append(users, testUser)
+	cfg := config.Load()
+	_, cleanup := withPostgres(t)
+	defer cleanup()
+
+	// Register test user
+	testUser := models.Credentials{
+		Email:    "profile@example.com",
+		Password: "password123",
+	}
+
+	// Register directly
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(testUser.Password), bcrypt.DefaultCost)
+	user, err := insertUser(models.User{
+		Email:    testUser.Email,
+		Password: string(hashedPassword),
+	}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	expirationTime := time.Now().Add(15 * time.Minute)
 	claims := &models.Claims{
-		UserID: testUser.Id,
+		UserID: user.Id,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	validToken, _ := token.SignedString(jwtKey)
+	validToken, _ := token.SignedString(cfg.General.JwtKey)
 
 	invalidUserClaims := &models.Claims{
-		UserID: 9999,
+		UserID: uuid.New(),
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 		},
 	}
 
 	invalidUserToken := jwt.NewWithClaims(jwt.SigningMethodHS256, invalidUserClaims)
-	nonExistentUserToken, _ := invalidUserToken.SignedString(jwtKey)
+	nonExistentUserToken, _ := invalidUserToken.SignedString(cfg.General.JwtKey)
 
 	tests := []struct {
 		name           string
@@ -366,7 +408,7 @@ func TestProfileHandler(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer "+tc.token)
 
 			rr := httptest.NewRecorder()
-			handler := http.HandlerFunc(ProfileHandler)
+			handler := http.HandlerFunc(ProfileHandler(cfg))
 
 			handler.ServeHTTP(rr, req)
 
@@ -381,8 +423,8 @@ func TestProfileHandler(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				if fmt.Sprintf("%d", testUser.Id) != response["id"] {
-					t.Fatalf("Expected ID: %v, Got: %v", testUser.Id, response["id"])
+				if fmt.Sprintf("%d", user.Id) != response["id"] {
+					t.Fatalf("Expected ID: %v, Got: %v", user.Id, response["id"])
 				}
 
 				if testUser.Email != response["email"] {
@@ -394,15 +436,28 @@ func TestProfileHandler(t *testing.T) {
 }
 
 func TestIntegration(t *testing.T) {
-	resetUsers()
+	cfg := config.Load()
+	_, cleanup := withPostgres(t)
+	defer cleanup()
 
-	r := mux.NewRouter()
-	SetupAuthRoutes(r)
-
+	// Register test user
 	testUser := models.Credentials{
 		Email:    "integration@example.com",
 		Password: "integration123",
 	}
+
+	// Register directly
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(testUser.Password), bcrypt.DefaultCost)
+	_, err := insertUser(models.User{
+		Email:    testUser.Email,
+		Password: string(hashedPassword),
+	}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := mux.NewRouter()
+	SetupAuthRoutes(r, cfg)
 
 	t.Run("Register User", func(t *testing.T) {
 		body, _ := json.Marshal(testUser)

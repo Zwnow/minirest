@@ -31,8 +31,8 @@ func SetupAuthRoutes(r *mux.Router, cfg config.Config) {
 	r.HandleFunc("/login", LoginHandler(cfg)).Methods("POST")
 
 	protected := r.PathPrefix("/api").Subrouter()
-	protected.Use(AuthMiddleware)
-	protected.HandleFunc("/profile", ProfileHandler).Methods("GET")
+	protected.Use(AuthMiddleware(cfg))
+	protected.HandleFunc("/profile", ProfileHandler(cfg)).Methods("GET")
 	protected.HandleFunc("/verify/{code}", EmailVerificationHandler(cfg)).Methods("GET")
 }
 
@@ -193,36 +193,38 @@ func LoginHandler(cfg config.Config) http.HandlerFunc {
 	}
 }
 
-func AuthMiddleware(next http.Handler, cfg config.Config) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Println("AuthMiddleware called")
-		// Get token
-		tokenStr := r.Header.Get("Authorization")
-		if tokenStr == "" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
+func AuthMiddleware(cfg config.Config) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			log.Println("AuthMiddleware called")
+			// Get token
+			tokenStr := r.Header.Get("Authorization")
+			if tokenStr == "" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 
-		// Remove Bearer Prefix
-		if len(tokenStr) > 7 && tokenStr[:7] == "Bearer " {
-			tokenStr = tokenStr[7:]
-		}
+			// Remove Bearer Prefix
+			if len(tokenStr) > 7 && tokenStr[:7] == "Bearer " {
+				tokenStr = tokenStr[7:]
+			}
 
-		// Parse and validate token
-		claims := &models.Claims{}
-		token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (any, error) {
-			return cfg.General.JwtKey, nil
+			// Parse and validate token
+			claims := &models.Claims{}
+			token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (any, error) {
+				return cfg.General.JwtKey, nil
+			})
+
+			if err != nil || !token.Valid {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			ctx := context.WithValue(r.Context(), UserContextKey, claims.UserID)
+
+			// Token is valid, proceed
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
-
-		if err != nil || !token.Valid {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		ctx := context.WithValue(r.Context(), UserContextKey, claims.UserID)
-
-		// Token is valid, proceed
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
+	}
 }
 
 func RecoveryMiddleware(next http.Handler) http.Handler {
