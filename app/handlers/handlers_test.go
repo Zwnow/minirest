@@ -115,16 +115,16 @@ func TestRunner(t *testing.T) {
 	_, cfg, cleanup, deleteUsers := withPostgres(t)
 	defer cleanup()
 
-	t.Run("TestRegisterHandler", testRegisterHandler(cfg, t))
+	t.Run("TestRegisterHandler", testRegisterHandler(cfg))
 	deleteUsers()
-	t.Run("TestLoginHandler", testLoginHandler(cfg, t))
+	t.Run("TestLoginHandler", testLoginHandler(cfg))
 	deleteUsers()
-	t.Run("TestAuthMiddleware", testAuthMiddleware(cfg, t))
+	t.Run("TestAuthMiddleware", testAuthMiddleware(cfg))
 	deleteUsers()
-	t.Run("TestProfileHandler", testProfileHandler(cfg, t))
+	t.Run("TestProfileHandler", testProfileHandler(cfg))
 }
 
-func testRegisterHandler(cfg config.Config, t1 *testing.T) func(t *testing.T) {
+func testRegisterHandler(cfg config.Config) func(t *testing.T) {
 	return func(t *testing.T) {
 		tests := []struct {
 			name           string
@@ -157,7 +157,7 @@ func testRegisterHandler(cfg config.Config, t1 *testing.T) func(t *testing.T) {
 		}
 
 		for _, tc := range tests {
-			t1.Run(tc.name, func(t *testing.T) {
+			t.Run(tc.name, func(t *testing.T) {
 				body, _ := json.Marshal(tc.credentials)
 				req, err := http.NewRequest("POST", "/register", bytes.NewBuffer(body))
 				if err != nil {
@@ -188,7 +188,7 @@ func testRegisterHandler(cfg config.Config, t1 *testing.T) func(t *testing.T) {
 	}
 }
 
-func testLoginHandler(cfg config.Config, t1 *testing.T) func(t *testing.T) {
+func testLoginHandler(cfg config.Config) func(t *testing.T) {
 	return func(t *testing.T) {
 		// Register test user
 		testUser := models.Credentials{
@@ -203,7 +203,7 @@ func testLoginHandler(cfg config.Config, t1 *testing.T) func(t *testing.T) {
 			Password: string(hashedPassword),
 		}, cfg)
 		if err != nil {
-			t1.Fatal(err)
+			t.Fatal(err)
 		}
 
 		tests := []struct {
@@ -242,7 +242,7 @@ func testLoginHandler(cfg config.Config, t1 *testing.T) func(t *testing.T) {
 		}
 
 		for _, tc := range tests {
-			t1.Run(tc.name, func(t *testing.T) {
+			t.Run(tc.name, func(t *testing.T) {
 				body, _ := json.Marshal(tc.credentials)
 				req, err := http.NewRequest("POST", "/login", bytes.NewBuffer(body))
 				if err != nil {
@@ -274,7 +274,7 @@ func testLoginHandler(cfg config.Config, t1 *testing.T) func(t *testing.T) {
 	}
 }
 
-func testAuthMiddleware(cfg config.Config, t1 *testing.T) func(t *testing.T) {
+func testAuthMiddleware(cfg config.Config) func(t *testing.T) {
 	return func(t *testing.T) {
 		// Register test user
 		testUser := models.Credentials{
@@ -289,7 +289,7 @@ func testAuthMiddleware(cfg config.Config, t1 *testing.T) func(t *testing.T) {
 			Password: string(hashedPassword),
 		}, cfg)
 		if err != nil {
-			t1.Fatal(err)
+			t.Fatal(err)
 		}
 
 		nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -336,7 +336,7 @@ func testAuthMiddleware(cfg config.Config, t1 *testing.T) func(t *testing.T) {
 		}
 
 		for _, tc := range tests {
-			t1.Run(tc.name, func(t *testing.T) {
+			t.Run(tc.name, func(t *testing.T) {
 				req, err := http.NewRequest("GET", "/profile", nil)
 				if err != nil {
 					t.Fatal(err)
@@ -383,7 +383,7 @@ func TestMailVerification(t *testing.T) {
 }
 */
 
-func testProfileHandler(cfg config.Config, t1 *testing.T) func(t *testing.T) {
+func testProfileHandler(cfg config.Config) func(t *testing.T) {
 	return func(t *testing.T) {
 		// Register test user
 		testUser := models.Credentials{
@@ -398,7 +398,7 @@ func testProfileHandler(cfg config.Config, t1 *testing.T) func(t *testing.T) {
 			Password: string(hashedPassword),
 		}, cfg)
 		if err != nil {
-			t1.Fatal(err)
+			t.Fatal(err)
 		}
 
 		expirationTime := time.Now().Add(15 * time.Minute)
@@ -443,7 +443,7 @@ func testProfileHandler(cfg config.Config, t1 *testing.T) func(t *testing.T) {
 		}
 
 		for _, tc := range tests {
-			t1.Run(tc.name, func(t *testing.T) {
+			t.Run(tc.name, func(t *testing.T) {
 				req, err := http.NewRequest("GET", "/api/profile", nil)
 				if err != nil {
 					t.Fatal(err)
@@ -480,7 +480,7 @@ func testProfileHandler(cfg config.Config, t1 *testing.T) func(t *testing.T) {
 	}
 }
 
-func testIntegration(cfg config.Config, t1 *testing.T) func(t *testing.T) {
+func testIntegration(cfg config.Config) func(t *testing.T) {
 	return func(t *testing.T) {
 		// Register test user
 		testUser := models.Credentials{
@@ -491,7 +491,7 @@ func testIntegration(cfg config.Config, t1 *testing.T) func(t *testing.T) {
 		r := mux.NewRouter()
 		SetupAuthRoutes(r, cfg)
 
-		t1.Run("Register User", func(t *testing.T) {
+		t.Run("Register User", func(t *testing.T) {
 			body, _ := json.Marshal(testUser)
 			req, _ := http.NewRequest("POST", "/register", bytes.NewBuffer(body))
 			rr := httptest.NewRecorder()
@@ -504,7 +504,7 @@ func testIntegration(cfg config.Config, t1 *testing.T) func(t *testing.T) {
 		})
 
 		var token string
-		t1.Run("Login User", func(t *testing.T) {
+		t.Run("Login User", func(t *testing.T) {
 			body, _ := json.Marshal(testUser)
 			req, _ := http.NewRequest("POST", "/login", bytes.NewBuffer(body))
 
@@ -524,7 +524,7 @@ func testIntegration(cfg config.Config, t1 *testing.T) func(t *testing.T) {
 			}
 		})
 
-		t1.Run("Access Protected Route", func(t *testing.T) {
+		t.Run("Access Protected Route", func(t *testing.T) {
 			req, _ := http.NewRequest("GET", "/api/profile", nil)
 			req.Header.Set("Authorization", "Bearer "+token)
 			rr := httptest.NewRecorder()
