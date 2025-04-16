@@ -435,8 +435,55 @@ func testMailVerification(cfg config.Config) func(t *testing.T) {
 				t.Fatalf("Expected Code: %d, Got: %d", tc.expectedStatus, rr.Code)
 			}
 		}
+	}
+}
 
-		t.Logf("%+v", user)
+func testPasswordReset(cfg config.Config) func(t *testing.T) {
+	return func(t *testing.T) {
+		// Register test user
+		testUser := models.User{
+			Email:    "password@example.com",
+			Password: "password!123",
+		}
+
+		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(testUser.Password), bcrypt.DefaultCost)
+		user, err := insertUser(models.User{
+			Email:    testUser.Email,
+			Password: string(hashedPassword),
+		}, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		tests := []struct {
+			name           string
+			email          string
+			expectedStatus int
+		}{
+			{
+				name:           "Generate Password Reset Token",
+				email:          testUser.Email,
+				expectedStatus: http.StatusOK,
+			},
+		}
+
+		r := mux.NewRouter()
+		SetupAuthRoutes(r, cfg)
+
+		for _, tc := range tests {
+			req, err := http.NewRequest("POST", "/password-reset", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rr := httptest.NewRecorder()
+
+			r.ServeHTTP(rr, req)
+
+			if tc.expectedStatus != rr.Code {
+				t.Fatalf("Expected Code: %d, Got: %d", tc.expectedStatus, rr.Code)
+			}
+		}
 	}
 }
 
