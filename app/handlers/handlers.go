@@ -129,7 +129,7 @@ func RegisterHandler(cfg config.Config) http.HandlerFunc {
 
 		// Send verification mail
 		go func() {
-			err := SendRegistrationMail("svenotimm@gmail.com", "Sven-Ole Timm", newUser.EmailVerificationCode)
+			err := SendRegistrationMail(cfg, newUser.Email, "Sven-Ole Timm", newUser.EmailVerificationCode)
 			if err != nil {
 				log.Printf("Failed to send registration mail: %v\n", err)
 			}

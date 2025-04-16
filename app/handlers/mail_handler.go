@@ -2,28 +2,27 @@ package handlers
 
 import (
 	"fmt"
-	"os"
+    "log"
 
+    "restfulapi/config"
 	"github.com/mailjet/mailjet-apiv3-go/v4"
 )
 
-func SendRegistrationMail(toEmail, toName, verificationCode string) error {
-	shouldSend := os.Getenv("MAIL_ACTIVE")
+func SendRegistrationMail(cfg config.Config, toEmail, toName, verificationCode string) error {
+	shouldSend := cfg.Mailjet.Active 
 	if shouldSend == "false" {
 		return nil
 	}
 
-	publicKey := os.Getenv("MAILJET_KEY")
-	secretKey := os.Getenv("MAILJET_SECRET")
-
-	verificationUrl := os.Getenv("BASE_URL") + "/api/verify/" + verificationCode
+	verificationUrl := cfg.General.BaseURL + "/api/verify/" + verificationCode
 	textBody := fmt.Sprintf("Hi! Please verify your E-Mail Address by clicking the following link: %s", verificationUrl)
 	htmlBody := fmt.Sprintf(`
         <h3>Hi!</h3>
         <p>Thank you for registering to our app! Please verify your E-Mail Address by clicking on the following link: %s</p>
     `, verificationUrl)
 
-	mj := mailjet.NewMailjetClient(publicKey, secretKey)
+    log.Printf("Using Mailjet key: %s, secret length: %d\n", cfg.Mailjet.Key, len(cfg.Mailjet.Secret))
+	mj := mailjet.NewMailjetClient(cfg.Mailjet.Key, cfg.Mailjet.Secret)
 
 	messageInfo := []mailjet.InfoMessagesV31{
 		{

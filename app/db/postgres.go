@@ -48,6 +48,12 @@ func SetupDatabase(cfg config.PostgresConfig) error {
 		log.Fatalf("failed to add uuid extension: %s", err)
 	}
 
+	// Clean Up Database During Development
+	_, err = db.Exec("DROP TABLE users")
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// Setup Schemas
 	_, err = db.Exec(`
         CREATE TABLE users (

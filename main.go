@@ -35,11 +35,12 @@ func main() {
 
 	srv := &http.Server{
 		Handler:      r,
-		Addr:         "127.0.0.1:8080",
+		Addr:         "0.0.0.0:8080",
 		WriteTimeout: 15 * time.Second,
 		ReadTimeout:  15 * time.Second,
 	}
 
+	log.Println("Server listening on 127.0.0.1:8080")
 	log.Fatal(srv.ListenAndServe())
 }
 
