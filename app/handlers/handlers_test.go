@@ -136,7 +136,7 @@ func testRegisterHandler(cfg config.Config) func(t *testing.T) {
 				name: "Successful Registration",
 				credentials: models.Credentials{
 					Email:    "test@example.com",
-					Password: "password123",
+					Password: "password!123",
 				},
 				expectedStatus: http.StatusCreated,
 				expectedBody: map[string]string{
@@ -147,7 +147,7 @@ func testRegisterHandler(cfg config.Config) func(t *testing.T) {
 				name: "Duplicate User",
 				credentials: models.Credentials{
 					Email:    "test@example.com",
-					Password: "password123",
+					Password: "password!123",
 				},
 				expectedStatus: http.StatusConflict,
 				expectedBody: map[string]string{

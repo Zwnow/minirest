@@ -11,6 +11,7 @@ type User struct {
 	Id                    uuid.UUID `json:"id"`
 	Email                 string    `json:"email"`
 	EmailVerificationCode string    `json:"-"`
+	PasswordResetCode     string    `json:"-"`
 	EmailVerified         bool      `json:"email_verified"`
 	Password              string    `json:"-"`
 	CreatedAt             time.Time `json:"created_at"`

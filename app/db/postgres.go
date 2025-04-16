@@ -60,6 +60,7 @@ func SetupDatabase(cfg config.PostgresConfig) error {
             id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
             email TEXT NOT NULL UNIQUE,
             email_verification_code TEXT NOT NULL,
+            password_reset_code TEXT,
             email_verified BOOLEAN DEFAULT FALSE,
             password TEXT NOT NULL,
             created_at TIMESTAMPTZ DEFAULT now(),

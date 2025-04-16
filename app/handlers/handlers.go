@@ -8,7 +8,10 @@ import (
 	"log"
 	"net/http"
 	"runtime/debug"
+    "regexp"
+    "errors"
 	"time"
+    "unicode"
 
 	"restfulapi/app/db"
 	"restfulapi/app/models"
@@ -29,11 +32,13 @@ func SetupAuthRoutes(r *mux.Router, cfg config.Config) {
 	r.Use(SecureHeadersMiddleware)
 	r.HandleFunc("/register", RegisterHandler(cfg)).Methods("POST")
 	r.HandleFunc("/login", LoginHandler(cfg)).Methods("POST")
+	r.HandleFunc("/password-reset", PasswordResetMailHandler(cfg)).Methods("POST")
+	r.HandleFunc("/password-reset/{code}", PasswordResetHandler(cfg)).Methods("POST")
+	r.HandleFunc("/verify/{code}", EmailVerificationHandler(cfg)).Methods("GET")
 
 	protected := r.PathPrefix("/api").Subrouter()
 	protected.Use(AuthMiddleware(cfg))
 	protected.HandleFunc("/profile", ProfileHandler(cfg)).Methods("GET")
-	protected.HandleFunc("/verify/{code}", EmailVerificationHandler(cfg)).Methods("GET")
 }
 
 func EmailVerificationHandler(cfg config.Config) http.HandlerFunc {
@@ -83,6 +88,73 @@ func EmailVerificationHandler(cfg config.Config) http.HandlerFunc {
 	}
 }
 
+func PasswordResetMailHandler(cfg config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var email string
+
+		err := json.NewDecoder(r.Body).Decode(&email)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			log.Println(err)
+			return
+		}
+
+		user, err := findUserByEmail(email, cfg)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			log.Println(err)
+			return
+		}
+
+		user.PasswordResetCode = uuid.NewString()
+		err = setPasswordResetCode(user, cfg)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			log.Println(err)
+			return
+		}
+
+		SendPasswordResetMail(cfg, user)
+	}
+}
+
+func PasswordResetHandler(cfg config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var password string
+
+		code := mux.Vars(r)["code"]
+
+		err := json.NewDecoder(r.Body).Decode(&password)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			log.Println(err)
+			return
+		}
+
+        if err := isStrongPassword(password); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+        }
+
+		user, err := findUserByPasswordResetToken(code, cfg)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			log.Println(err)
+			return
+		}
+
+		err = updateUserPassword(cfg, user, password)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			log.Println(err)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
 func RegisterHandler(cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var creds models.Credentials
@@ -94,6 +166,18 @@ func RegisterHandler(cfg config.Config) http.HandlerFunc {
 			json.NewEncoder(w).Encode(map[string]string{"error": "No credentials provided"})
 			return
 		}
+
+        if err := isValidEmail(creds.Email); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+        }
+
+        if err := isStrongPassword(creds.Password); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+        }
 
 		// Check if user already exists
 		_, err = findUserByEmail(creds.Email, cfg)
@@ -356,6 +440,66 @@ func findUserByID(id uuid.UUID, cfg config.Config) (models.User, error) {
 	return user, nil
 }
 
+func findUserByPasswordResetToken(token string, cfg config.Config) (models.User, error) {
+	var user models.User
+
+	db, err := db.NewPostgres(cfg.Postgres)
+	if err != nil {
+		return user, err
+	}
+	defer db.Close()
+
+	query := `
+    SELECT id, email, email_verification_code, email_verified, password, created_at, updated_at
+    FROM users
+    WHERE password_reset_code = $1
+    `
+
+	err = db.QueryRow(query, token).Scan(
+		&user.Id,
+		&user.Email,
+		&user.EmailVerificationCode,
+		&user.PasswordResetCode,
+		&user.EmailVerified,
+		&user.Password,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if err != nil {
+		return user, err
+	}
+
+	return user, nil
+}
+
+func updateUserPassword(cfg config.Config, user models.User, newPassword string) error {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	db, err := db.NewPostgres(cfg.Postgres)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	query := `
+    UPDATE users SET
+        password_reset_code = "", 
+        password = $1
+        updated_at = now()
+    WHERE id = $2
+    `
+
+	_, err = db.Exec(query, hashedPassword, user.Id)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func verifyUserEmail(user models.User, cfg config.Config) error {
 	db, err := db.NewPostgres(cfg.Postgres)
 	if err != nil {
@@ -371,6 +515,28 @@ func verifyUserEmail(user models.User, cfg config.Config) error {
     `
 
 	_, err = db.Exec(query, user.Id)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func setPasswordResetCode(user models.User, cfg config.Config) error {
+	db, err := db.NewPostgres(cfg.Postgres)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	query := `
+    UPDATE users SET
+        password_reset_code = $1, 
+        updated_at = now()
+    WHERE id = $2
+    `
+
+	_, err = db.Exec(query, user.PasswordResetCode, user.Id)
 	if err != nil {
 		return err
 	}
@@ -409,4 +575,48 @@ func insertUser(user models.User, cfg config.Config) (models.User, error) {
 	}
 
 	return user, nil
+}
+
+func isValidEmail(email string) error {
+	const emailRegex = `^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`
+	re := regexp.MustCompile(emailRegex)
+
+	if !re.MatchString(email) {
+		return errors.New("invalid email format")
+	}
+	return nil
+}
+
+func isStrongPassword(password string) error {
+	if len(password) < 8 {
+		return errors.New("password must be at least 8 characters long")
+	}
+
+	if len(password) > 72 {
+		return errors.New("password must be at most 72 characters long")
+	}
+
+	var hasLetter, hasDigit, hasSpecial bool
+	for _, ch := range password {
+		switch {
+		case unicode.IsLetter(ch):
+			hasLetter = true
+		case unicode.IsDigit(ch):
+			hasDigit = true
+		case unicode.IsPunct(ch) || unicode.IsSymbol(ch):
+			hasSpecial = true
+		}
+	}
+
+	if !hasLetter {
+		return errors.New("password must include at least one letter")
+	}
+	if !hasDigit {
+		return errors.New("password must include at least one digit")
+	}
+	if !hasSpecial {
+		return errors.New("password must include at least one special character")
+	}
+
+	return nil
 }
