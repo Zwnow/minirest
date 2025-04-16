@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 
 	"restfulapi/config"
 
@@ -40,6 +41,11 @@ func SetupDatabase(cfg config.PostgresConfig) error {
 
 	if err := db.Ping(); err != nil {
 		return err
+	}
+
+	_, err = db.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`)
+	if err != nil {
+		log.Fatalf("failed to add uuid extension: %s", err)
 	}
 
 	// Setup Schemas
