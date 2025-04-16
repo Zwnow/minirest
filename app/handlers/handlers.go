@@ -43,48 +43,35 @@ func SetupAuthRoutes(r *mux.Router, cfg config.Config) {
 
 func EmailVerificationHandler(cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := r.Context().Value(UserContextKey)
-		if id == nil {
-			errorResponse(http.StatusBadRequest, "User not found in context", w)
+        code := mux.Vars(r)["code"]
+		if code == "" {
+			errorResponse(http.StatusBadRequest, "Missing verification code", w)
+            log.Println("code empty")
 			return
 		}
 
-		userID, err := uuid.Parse(id.(string))
-		if err != nil {
-			errorResponse(http.StatusBadRequest, "Invalid user id", w)
-			return
-		}
-
-		user, err := findUserByID(userID, cfg)
+		user, err := findUserByEmailVerificationToken(code, cfg)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				errorResponse(http.StatusBadRequest, "User not found", w)
+                log.Println(err)
 				return
 			}
 			errorResponse(http.StatusInternalServerError, "", w)
 			log.Println(err)
 			return
-		}
+        }
 
-		code := mux.Vars(r)["code"]
-		if code == "" {
-			errorResponse(http.StatusBadRequest, "Missing verification code", w)
-			return
-		}
+        user.EmailVerified = true
+        err = verifyUserEmail(user, cfg)
+        if err != nil {
+            errorResponse(http.StatusInternalServerError, "Failed to verify user email", w)
+            log.Println(err)
+            return
+        }
 
-		if code == user.EmailVerificationCode {
-			user.EmailVerified = true
-			err = verifyUserEmail(user, cfg)
-			if err != nil {
-				errorResponse(http.StatusInternalServerError, "Failed to verify user email", w)
-				return
-			}
-
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]string{"message": "Email verified successfully"})
-			return
-		}
-		w.WriteHeader(http.StatusBadRequest)
+        w.WriteHeader(http.StatusOK)
+        json.NewEncoder(w).Encode(map[string]string{"message": "Email verified successfully"})
 	}
 }
 
@@ -425,6 +412,36 @@ func findUserByID(id uuid.UUID, cfg config.Config) (models.User, error) {
     `
 
 	err = db.QueryRow(query, id).Scan(
+		&user.Id,
+		&user.Email,
+		&user.EmailVerificationCode,
+		&user.EmailVerified,
+		&user.Password,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if err != nil {
+		return user, err
+	}
+
+	return user, nil
+}
+func findUserByEmailVerificationToken(token string, cfg config.Config) (models.User, error) {
+	var user models.User
+
+	db, err := db.NewPostgres(cfg.Postgres)
+	if err != nil {
+		return user, err
+	}
+	defer db.Close()
+
+	query := `
+    SELECT id, email, email_verification_code, email_verified, password, created_at, updated_at
+    FROM users
+    WHERE email_verification_code = $1
+    `
+
+	err = db.QueryRow(query, token).Scan(
 		&user.Id,
 		&user.Email,
 		&user.EmailVerificationCode,

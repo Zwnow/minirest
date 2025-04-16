@@ -122,6 +122,9 @@ func TestRunner(t *testing.T) {
 	t.Run("TestAuthMiddleware", testAuthMiddleware(cfg))
 	deleteUsers()
 	t.Run("TestProfileHandler", testProfileHandler(cfg))
+	deleteUsers()
+	t.Run("TestIntegration", testIntegration(cfg))
+	t.Run("TestEmailVerification", testMailVerification(cfg))
 }
 
 func testRegisterHandler(cfg config.Config) func(t *testing.T) {
@@ -193,10 +196,9 @@ func testLoginHandler(cfg config.Config) func(t *testing.T) {
 		// Register test user
 		testUser := models.Credentials{
 			Email:    "login@example.com",
-			Password: "password123",
+			Password: "password!123",
 		}
 
-		// Register directly
 		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(testUser.Password), bcrypt.DefaultCost)
 		_, err := insertUser(models.User{
 			Email:    testUser.Email,
@@ -216,7 +218,7 @@ func testLoginHandler(cfg config.Config) func(t *testing.T) {
 				name: "Successful Login",
 				credentials: models.Credentials{
 					Email:    "login@example.com",
-					Password: "password123",
+					Password: "password!123",
 				},
 				expectedStatus: http.StatusOK,
 				checkToken:     true,
@@ -374,14 +376,69 @@ func generateExpiredToken(cfg config.Config) string {
 	return expiredToken
 }
 
-/*
-func TestMailVerification(t *testing.T) {
-	resetUsers()
-	testUser := models.User{Id: 1, Email: "mail@example.com", EmailVerificationCode: uuid.NewString()}
-	users = append(users, testUser)
-	// TODO finish test
+func testMailVerification(cfg config.Config) func(t *testing.T) {
+	return func(t *testing.T) {
+		// Register test user
+		testUser := models.User{
+			Email:    "mail@example.com",
+			Password: "password!123",
+		}
+
+		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(testUser.Password), bcrypt.DefaultCost)
+		user, err := insertUser(models.User{
+			Email:                 testUser.Email,
+			Password:              string(hashedPassword),
+			EmailVerificationCode: uuid.NewString(),
+		}, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		tests := []struct {
+			name             string
+			verificationCode string
+			expectedStatus   int
+		}{
+			{
+				name:             "Valid Code",
+				verificationCode: user.EmailVerificationCode,
+				expectedStatus:   http.StatusOK,
+			},
+			{
+				name:             "Empty Code",
+				verificationCode: "",
+				expectedStatus:   http.StatusNotFound,
+			},
+			{
+				name:             "Wrong Code",
+				verificationCode: "djfdklsgn",
+				expectedStatus:   http.StatusBadRequest,
+			},
+		}
+
+		r := mux.NewRouter()
+		SetupAuthRoutes(r, cfg)
+
+		for _, tc := range tests {
+			url := fmt.Sprintf("/verify/%s", tc.verificationCode)
+			t.Log(url)
+			req, err := http.NewRequest("GET", fmt.Sprintf("/verify/%s", tc.verificationCode), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rr := httptest.NewRecorder()
+
+			r.ServeHTTP(rr, req)
+
+			if tc.expectedStatus != rr.Code {
+				t.Fatalf("Expected Code: %d, Got: %d", tc.expectedStatus, rr.Code)
+			}
+		}
+
+		t.Logf("%+v", user)
+	}
 }
-*/
 
 func testProfileHandler(cfg config.Config) func(t *testing.T) {
 	return func(t *testing.T) {
@@ -485,7 +542,7 @@ func testIntegration(cfg config.Config) func(t *testing.T) {
 		// Register test user
 		testUser := models.Credentials{
 			Email:    "integration@example.com",
-			Password: "integration123",
+			Password: "integration!123",
 		}
 
 		r := mux.NewRouter()
