@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	rdb "restfulapi/app/db"
 	"restfulapi/app/models"
 	"restfulapi/config"
 
@@ -93,17 +94,7 @@ func withPostgres(t *testing.T) (*sql.DB, config.Config, func(), func()) {
 		t.Fatalf("failed to add uuid extension: %s", err)
 	}
 
-	_, err = db.Exec(`
-        CREATE TABLE users (
-            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            email TEXT UNIQUE NOT NULL,
-            email_verification_code TEXT NOT NULL,
-            email_verified BOOLEAN DEFAULT FALSE,
-            password TEXT NOT NULL,
-            created_at TIMESTAMPTZ DEFAULT now(),
-            updated_at TIMESTAMPTZ DEFAULT now()
-        )
-    `)
+	_, err = db.Exec(rdb.GetUserTableQuery())
 	if err != nil {
 		t.Fatalf("failed to create user schema: %s", err)
 	}
@@ -117,14 +108,16 @@ func TestRunner(t *testing.T) {
 
 	t.Run("TestRegisterHandler", testRegisterHandler(cfg))
 	deleteUsers()
-	t.Run("TestLoginHandler", testLoginHandler(cfg))
 	deleteUsers()
+	t.Run("TestLoginHandler", testLoginHandler(cfg))
 	t.Run("TestAuthMiddleware", testAuthMiddleware(cfg))
 	deleteUsers()
 	t.Run("TestProfileHandler", testProfileHandler(cfg))
 	deleteUsers()
 	t.Run("TestIntegration", testIntegration(cfg))
 	t.Run("TestEmailVerification", testMailVerification(cfg))
+	deleteUsers()
+	t.Run("TestPasswordReset", testPasswordResetGeneration(cfg))
 }
 
 func testRegisterHandler(cfg config.Config) func(t *testing.T) {
@@ -420,8 +413,6 @@ func testMailVerification(cfg config.Config) func(t *testing.T) {
 		SetupAuthRoutes(r, cfg)
 
 		for _, tc := range tests {
-			url := fmt.Sprintf("/verify/%s", tc.verificationCode)
-			t.Log(url)
 			req, err := http.NewRequest("GET", fmt.Sprintf("/verify/%s", tc.verificationCode), nil)
 			if err != nil {
 				t.Fatal(err)
@@ -438,7 +429,7 @@ func testMailVerification(cfg config.Config) func(t *testing.T) {
 	}
 }
 
-func testPasswordReset(cfg config.Config) func(t *testing.T) {
+func testPasswordResetGeneration(cfg config.Config) func(t *testing.T) {
 	return func(t *testing.T) {
 		// Register test user
 		testUser := models.User{
@@ -447,7 +438,7 @@ func testPasswordReset(cfg config.Config) func(t *testing.T) {
 		}
 
 		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(testUser.Password), bcrypt.DefaultCost)
-		user, err := insertUser(models.User{
+		_, err := insertUser(models.User{
 			Email:    testUser.Email,
 			Password: string(hashedPassword),
 		}, cfg)
@@ -459,11 +450,19 @@ func testPasswordReset(cfg config.Config) func(t *testing.T) {
 			name           string
 			email          string
 			expectedStatus int
+			checkUser      bool
 		}{
 			{
 				name:           "Generate Password Reset Token",
 				email:          testUser.Email,
 				expectedStatus: http.StatusOK,
+				checkUser:      true,
+			},
+			{
+				name:           "Invalid E-Mail",
+				email:          "some@email.com",
+				expectedStatus: http.StatusBadRequest,
+				checkUser:      false,
 			},
 		}
 
@@ -471,7 +470,8 @@ func testPasswordReset(cfg config.Config) func(t *testing.T) {
 		SetupAuthRoutes(r, cfg)
 
 		for _, tc := range tests {
-			req, err := http.NewRequest("POST", "/password-reset", nil)
+			body, _ := json.Marshal(map[string]string{"email": tc.email})
+			req, err := http.NewRequest("POST", "/password-reset", bytes.NewBuffer(body))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -482,6 +482,16 @@ func testPasswordReset(cfg config.Config) func(t *testing.T) {
 
 			if tc.expectedStatus != rr.Code {
 				t.Fatalf("Expected Code: %d, Got: %d", tc.expectedStatus, rr.Code)
+			}
+
+			if tc.checkUser {
+				user, err := findUserByEmail(tc.email, cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if user.PasswordResetCode == "" {
+					t.Fatal("Password reset code is empty")
+				}
 			}
 		}
 	}

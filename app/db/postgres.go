@@ -55,21 +55,25 @@ func SetupDatabase(cfg config.PostgresConfig) error {
 	}
 
 	// Setup Schemas
-	_, err = db.Exec(`
-        CREATE TABLE users (
-            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            email TEXT NOT NULL UNIQUE,
-            email_verification_code TEXT NOT NULL,
-            password_reset_code TEXT,
-            email_verified BOOLEAN DEFAULT FALSE,
-            password TEXT NOT NULL,
-            created_at TIMESTAMPTZ DEFAULT now(),
-            updated_at TIMESTAMPTZ DEFAULT now()
-        )
-    `)
+	_, err = db.Exec(GetUserTableQuery())
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func GetUserTableQuery() string {
+	return `
+        CREATE TABLE users (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            email TEXT NOT NULL UNIQUE,
+            email_verification_code TEXT NOT NULL,
+            password_reset_code TEXT DEFAULT '',
+            email_verified BOOLEAN DEFAULT FALSE,
+            password TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT now(),
+            updated_at TIMESTAMPTZ DEFAULT now()
+        )
+    `
 }

@@ -75,18 +75,22 @@ func EmailVerificationHandler(cfg config.Config) http.HandlerFunc {
 	}
 }
 
+type PasswordResetRequest struct {
+    Email string `json:"email"`
+}
+
 func PasswordResetMailHandler(cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var email string
+        var req PasswordResetRequest
 
-		err := json.NewDecoder(r.Body).Decode(&email)
+		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			log.Println(err)
 			return
 		}
 
-		user, err := findUserByEmail(email, cfg)
+		user, err := findUserByEmail(req.Email, cfg)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			log.Println(err)
@@ -375,7 +379,7 @@ func findUserByEmail(email string, cfg config.Config) (models.User, error) {
 	defer db.Close()
 
 	query := `
-    SELECT id, email, email_verification_code, email_verified, password, created_at, updated_at
+    SELECT id, email, email_verification_code, email_verified, password_reset_code, password, created_at, updated_at
     FROM users
     WHERE email = $1
     `
@@ -385,6 +389,7 @@ func findUserByEmail(email string, cfg config.Config) (models.User, error) {
 		&user.Email,
 		&user.EmailVerificationCode,
 		&user.EmailVerified,
+		&user.PasswordResetCode,
 		&user.Password,
 		&user.CreatedAt,
 		&user.UpdatedAt,
