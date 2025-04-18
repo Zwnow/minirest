@@ -11,11 +11,17 @@ type User struct {
 	Id                    uuid.UUID `json:"id"`
 	Email                 string    `json:"email"`
 	EmailVerificationCode string    `json:"-"`
-	PasswordResetCode     string    `json:"-"`
 	EmailVerified         bool      `json:"email_verified"`
 	Password              string    `json:"-"`
 	CreatedAt             time.Time `json:"created_at"`
 	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+type PasswordResetToken struct {
+	Id                uuid.UUID `json:"id"`
+	UserId            uuid.UUID `json:"user_id"`
+	PasswordResetCode string    `json:"-"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type Credentials struct {

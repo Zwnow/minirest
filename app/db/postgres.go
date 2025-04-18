@@ -60,20 +60,35 @@ func SetupDatabase(cfg config.PostgresConfig) error {
 		return err
 	}
 
+	_, err = db.Exec(GetUserTableQuery())
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func GetUserTableQuery() string {
 	return `
-        CREATE TABLE users (
+        CREATE TABLE IF NOT EXISTS users (
             id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
             email TEXT NOT NULL UNIQUE,
             email_verification_code TEXT NOT NULL,
-            password_reset_code TEXT DEFAULT '',
             email_verified BOOLEAN DEFAULT FALSE,
             password TEXT NOT NULL,
             created_at TIMESTAMPTZ DEFAULT now(),
             updated_at TIMESTAMPTZ DEFAULT now()
+        )
+    `
+}
+
+func GetPasswordResetTokenTableQuery() string {
+	return `
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_id UUID NOT NULL UNIQUE,
+            password_reset_code TEXT DEFAULT '',
+            created_at TIMESTAMPTZ DEFAULT now()
         )
     `
 }

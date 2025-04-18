@@ -4,14 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"runtime/debug"
-    "regexp"
-    "errors"
 	"time"
-    "unicode"
+	"unicode"
 
 	"restfulapi/app/db"
 	"restfulapi/app/models"
@@ -43,10 +43,10 @@ func SetupAuthRoutes(r *mux.Router, cfg config.Config) {
 
 func EmailVerificationHandler(cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-        code := mux.Vars(r)["code"]
+		code := mux.Vars(r)["code"]
 		if code == "" {
 			errorResponse(http.StatusBadRequest, "Missing verification code", w)
-            log.Println("code empty")
+			log.Println("code empty")
 			return
 		}
 
@@ -54,34 +54,35 @@ func EmailVerificationHandler(cfg config.Config) http.HandlerFunc {
 		if err != nil {
 			if err == sql.ErrNoRows {
 				errorResponse(http.StatusBadRequest, "User not found", w)
-                log.Println(err)
+				log.Println(err)
 				return
 			}
 			errorResponse(http.StatusInternalServerError, "", w)
 			log.Println(err)
 			return
-        }
+		}
 
-        user.EmailVerified = true
-        err = verifyUserEmail(user, cfg)
-        if err != nil {
-            errorResponse(http.StatusInternalServerError, "Failed to verify user email", w)
-            log.Println(err)
-            return
-        }
+		user.EmailVerified = true
+		err = verifyUserEmail(user, cfg)
+		if err != nil {
+			errorResponse(http.StatusInternalServerError, "Failed to verify user email", w)
+			log.Println(err)
+			return
+		}
 
-        w.WriteHeader(http.StatusOK)
-        json.NewEncoder(w).Encode(map[string]string{"message": "Email verified successfully"})
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Email verified successfully"})
 	}
 }
 
 type PasswordResetRequest struct {
-    Email string `json:"email"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 func PasswordResetMailHandler(cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-        var req PasswordResetRequest
+		var req PasswordResetRequest
 
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
@@ -97,36 +98,39 @@ func PasswordResetMailHandler(cfg config.Config) http.HandlerFunc {
 			return
 		}
 
-		user.PasswordResetCode = uuid.NewString()
-		err = setPasswordResetCode(user, cfg)
+		token := models.PasswordResetToken{
+			UserId:            user.Id,
+			PasswordResetCode: uuid.NewString(),
+		}
+
+		_, err = insertPasswordResetToken(token, cfg)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			log.Println(err)
 			return
 		}
 
-		SendPasswordResetMail(cfg, user)
+		SendPasswordResetMail(cfg, user, token)
 	}
 }
 
 func PasswordResetHandler(cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var password string
-
 		code := mux.Vars(r)["code"]
 
-		err := json.NewDecoder(r.Body).Decode(&password)
+		var req PasswordResetRequest
+		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			log.Println(err)
 			return
 		}
 
-        if err := isStrongPassword(password); err != nil {
+		if err := isStrongPassword(req.Password); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
-        }
+		}
 
 		user, err := findUserByPasswordResetToken(code, cfg)
 		if err != nil {
@@ -135,7 +139,7 @@ func PasswordResetHandler(cfg config.Config) http.HandlerFunc {
 			return
 		}
 
-		err = updateUserPassword(cfg, user, password)
+		err = updateUserPassword(cfg, user, req.Password)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			log.Println(err)
@@ -158,17 +162,17 @@ func RegisterHandler(cfg config.Config) http.HandlerFunc {
 			return
 		}
 
-        if err := isValidEmail(creds.Email); err != nil {
+		if err := isValidEmail(creds.Email); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
-        }
+		}
 
-        if err := isStrongPassword(creds.Password); err != nil {
+		if err := isStrongPassword(creds.Password); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
-        }
+		}
 
 		// Check if user already exists
 		_, err = findUserByEmail(creds.Email, cfg)
@@ -379,7 +383,7 @@ func findUserByEmail(email string, cfg config.Config) (models.User, error) {
 	defer db.Close()
 
 	query := `
-    SELECT id, email, email_verification_code, email_verified, password_reset_code, password, created_at, updated_at
+    SELECT id, email, email_verification_code, email_verified, password, created_at, updated_at
     FROM users
     WHERE email = $1
     `
@@ -389,7 +393,6 @@ func findUserByEmail(email string, cfg config.Config) (models.User, error) {
 		&user.Email,
 		&user.EmailVerificationCode,
 		&user.EmailVerified,
-		&user.PasswordResetCode,
 		&user.Password,
 		&user.CreatedAt,
 		&user.UpdatedAt,
@@ -431,6 +434,7 @@ func findUserByID(id uuid.UUID, cfg config.Config) (models.User, error) {
 
 	return user, nil
 }
+
 func findUserByEmailVerificationToken(token string, cfg config.Config) (models.User, error) {
 	var user models.User
 
@@ -464,6 +468,7 @@ func findUserByEmailVerificationToken(token string, cfg config.Config) (models.U
 
 func findUserByPasswordResetToken(token string, cfg config.Config) (models.User, error) {
 	var user models.User
+	var resetToken models.PasswordResetToken
 
 	db, err := db.NewPostgres(cfg.Postgres)
 	if err != nil {
@@ -471,17 +476,36 @@ func findUserByPasswordResetToken(token string, cfg config.Config) (models.User,
 	}
 	defer db.Close()
 
-	query := `
-    SELECT id, email, email_verification_code, email_verified, password, created_at, updated_at
-    FROM users
+	// Get token
+	tokenQuery := `
+    SELECT id, user_id, password_reset_code, created_at 
+    FROM password_reset_tokens
     WHERE password_reset_code = $1
     `
 
-	err = db.QueryRow(query, token).Scan(
+	err = db.QueryRow(tokenQuery, token).Scan(
+		&resetToken.Id,
+		&resetToken.UserId,
+		&resetToken.PasswordResetCode,
+		&resetToken.CreatedAt,
+	)
+	if err != nil {
+		log.Println("Reset token not found")
+		return user, err
+	}
+
+	// Get user
+
+	query := `
+    SELECT id, email, email_verification_code, email_verified, password, created_at, updated_at
+    FROM users
+    WHERE id = $1
+    `
+
+	err = db.QueryRow(query, resetToken.UserId).Scan(
 		&user.Id,
 		&user.Email,
 		&user.EmailVerificationCode,
-		&user.PasswordResetCode,
 		&user.EmailVerified,
 		&user.Password,
 		&user.CreatedAt,
@@ -508,8 +532,7 @@ func updateUserPassword(cfg config.Config, user models.User, newPassword string)
 
 	query := `
     UPDATE users SET
-        password_reset_code = "", 
-        password = $1
+        password = $1,
         updated_at = now()
     WHERE id = $2
     `
@@ -537,28 +560,6 @@ func verifyUserEmail(user models.User, cfg config.Config) error {
     `
 
 	_, err = db.Exec(query, user.Id)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func setPasswordResetCode(user models.User, cfg config.Config) error {
-	db, err := db.NewPostgres(cfg.Postgres)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	query := `
-    UPDATE users SET
-        password_reset_code = $1, 
-        updated_at = now()
-    WHERE id = $2
-    `
-
-	_, err = db.Exec(query, user.PasswordResetCode, user.Id)
 	if err != nil {
 		return err
 	}
@@ -641,4 +642,74 @@ func isStrongPassword(password string) error {
 	}
 
 	return nil
+}
+
+func insertPasswordResetToken(token models.PasswordResetToken, cfg config.Config) (models.PasswordResetToken, error) {
+	db, err := db.NewPostgres(cfg.Postgres)
+	if err != nil {
+		return token, err
+	}
+	defer db.Close()
+
+	query := `
+    INSERT INTO password_reset_tokens (user_id, password_reset_code)
+    VALUES ($1, $2)
+    RETURNING id, created_at
+    `
+
+	err = db.QueryRow(query,
+		token.UserId,
+		token.PasswordResetCode,
+	).Scan(&token.Id, &token.CreatedAt)
+	if err != nil {
+		return token, err
+	}
+
+	return token, nil
+}
+
+func getPasswordResetToken(token string, cfg config.Config) (models.PasswordResetToken, error) {
+	var resetToken models.PasswordResetToken
+	db, err := db.NewPostgres(cfg.Postgres)
+	if err != nil {
+		return resetToken, err
+	}
+	defer db.Close()
+
+	query := `
+    SELECT id, user_id, password_reset_code, created_at FROM password_reset_code
+    WHERE password_reset_code = $1
+    `
+
+	err = db.QueryRow(query,
+		token,
+	).Scan(&resetToken.Id, &resetToken.UserId, &resetToken.PasswordResetCode, &resetToken.CreatedAt)
+	if err != nil {
+		return resetToken, err
+	}
+
+	return resetToken, nil
+}
+
+func getPasswordResetTokenByUserId(id uuid.UUID, cfg config.Config) (models.PasswordResetToken, error) {
+	var resetToken models.PasswordResetToken
+	db, err := db.NewPostgres(cfg.Postgres)
+	if err != nil {
+		return resetToken, err
+	}
+	defer db.Close()
+
+	query := `
+    SELECT id, user_id, password_reset_code, created_at FROM password_reset_tokens
+    WHERE user_id = $1
+    `
+
+	err = db.QueryRow(query,
+		id,
+	).Scan(&resetToken.Id, &resetToken.UserId, &resetToken.PasswordResetCode, &resetToken.CreatedAt)
+	if err != nil {
+		return resetToken, err
+	}
+
+	return resetToken, nil
 }

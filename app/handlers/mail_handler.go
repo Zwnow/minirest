@@ -2,15 +2,15 @@ package handlers
 
 import (
 	"fmt"
-    "log"
+	"log"
 
-    "restfulapi/config"
-    "restfulapi/app/models"
 	"github.com/mailjet/mailjet-apiv3-go/v4"
+	"restfulapi/app/models"
+	"restfulapi/config"
 )
 
 func SendRegistrationMail(cfg config.Config, toEmail, toName, verificationCode string) error {
-	shouldSend := cfg.Mailjet.Active 
+	shouldSend := cfg.Mailjet.Active
 	if shouldSend == "false" {
 		return nil
 	}
@@ -22,7 +22,7 @@ func SendRegistrationMail(cfg config.Config, toEmail, toName, verificationCode s
         <p>Thank you for registering to our app! Please verify your E-Mail Address by clicking on the following link: %s</p>
     `, verificationUrl)
 
-    log.Printf("Using Mailjet key: %s, secret length: %d\n", cfg.Mailjet.Key, len(cfg.Mailjet.Secret))
+	log.Printf("Using Mailjet key: %s, secret length: %d\n", cfg.Mailjet.Key, len(cfg.Mailjet.Secret))
 	mj := mailjet.NewMailjetClient(cfg.Mailjet.Key, cfg.Mailjet.Secret)
 
 	messageInfo := []mailjet.InfoMessagesV31{
@@ -54,20 +54,20 @@ func SendRegistrationMail(cfg config.Config, toEmail, toName, verificationCode s
 	return nil
 }
 
-func SendPasswordResetMail(cfg config.Config, user models.User) error {
-	shouldSend := cfg.Mailjet.Active 
+func SendPasswordResetMail(cfg config.Config, user models.User, token models.PasswordResetToken) error {
+	shouldSend := cfg.Mailjet.Active
 	if shouldSend == "false" {
 		return nil
 	}
 
-	resetUrl := cfg.General.BaseURL + "/password-reset/" + user.PasswordResetCode
-    textBody := fmt.Sprintf("Hi! A password reset was requested for your account. Please follow this link to reset your password: %s", resetUrl)
+	resetUrl := cfg.General.BaseURL + "/password-reset/" + token.PasswordResetCode
+	textBody := fmt.Sprintf("Hi! A password reset was requested for your account. Please follow this link to reset your password: %s", resetUrl)
 	htmlBody := fmt.Sprintf(`
         <h3>Hi!</h3>
         <p>A password reset was requested for your account. Please follow this link to reset your password: %s</p>
     `, resetUrl)
 
-    log.Printf("Using Mailjet key: %s, secret length: %d\n", cfg.Mailjet.Key, len(cfg.Mailjet.Secret))
+	log.Printf("Using Mailjet key: %s, secret length: %d\n", cfg.Mailjet.Key, len(cfg.Mailjet.Secret))
 	mj := mailjet.NewMailjetClient(cfg.Mailjet.Key, cfg.Mailjet.Secret)
 
 	messageInfo := []mailjet.InfoMessagesV31{

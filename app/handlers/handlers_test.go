@@ -99,6 +99,11 @@ func withPostgres(t *testing.T) (*sql.DB, config.Config, func(), func()) {
 		t.Fatalf("failed to create user schema: %s", err)
 	}
 
+	_, err = db.Exec(rdb.GetPasswordResetTokenTableQuery())
+	if err != nil {
+		t.Fatalf("failed to create password reset token schema: %s", err)
+	}
+
 	return db, cfg, cleanup, deleteUsers
 }
 
@@ -489,11 +494,28 @@ func testPasswordResetGeneration(cfg config.Config) func(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if user.PasswordResetCode == "" {
-					t.Fatal("Password reset code is empty")
+				_, err = getPasswordResetTokenByUserId(user.Id, cfg)
+				if err != nil {
+					t.Fatal(err)
 				}
 			}
 		}
+	}
+}
+
+func testPasswordReset(cfg config.Config) func(t *testing.T) {
+	return func(t *testing.T) {
+		/*
+			testUser := models.User{
+				Email:    "pwd@example.com",
+				Password: "password!123",
+			}
+
+			insertedUser, err := insertUser(testUser, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+		*/
 	}
 }
 
